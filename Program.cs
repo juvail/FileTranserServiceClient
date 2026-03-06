@@ -46,38 +46,58 @@ class Program
         await Task.WhenAll(tasks);
     }
 
-    private static async Task UploadFileAsync(int requestId)
+    private static async Task UploadFileAsync(string filePath, int chunkSize = 1024 * 1024)
     {
         string fileId = Guid.NewGuid().ToString();
-        string fileName = $"testfile_{requestId}.txt";
-        int totalChunks = 1;
+        string fileName = Path.GetFileName(filePath);
 
         try
         {
-            var content = new MultipartFormDataContent();
+            byte[] buffer = new byte[chunkSize];
+            int chunkIndex = 0;
 
-            var fileBytes = System.Text.Encoding.UTF8.GetBytes("Sample file content for testing");
-            var fileContent = new ByteArrayContent(fileBytes);
-            fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("application/octet-stream");
+            await using var fileStream = new FileStream(
+                filePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                81920,
+                useAsync: true);
 
-            content.Add(fileContent, "chunk", fileName);
-            content.Add(new StringContent(fileId), "fileId");
-            content.Add(new StringContent("0"), "chunkIndex");
+            int bytesRead;
 
-            await _httpClient.PostAsync("upload-chunk", content);
+            while ((bytesRead = await fileStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+            {
+                using var content = new MultipartFormDataContent();
 
-            var completeContent = new MultipartFormDataContent();
+                var chunkContent = new ByteArrayContent(buffer, 0, bytesRead);
+                chunkContent.Headers.ContentType =
+                    new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+
+                content.Add(chunkContent, "chunk", fileName);
+                content.Add(new StringContent(fileId), "fileId");
+                content.Add(new StringContent(chunkIndex.ToString()), "chunkIndex");
+
+                var response = await _httpClient.PostAsync("upload-chunk", content);
+                response.EnsureSuccessStatusCode();
+
+                chunkIndex++;
+            }
+
+            // Notify server upload completed
+            using var completeContent = new MultipartFormDataContent();
             completeContent.Add(new StringContent(fileId), "fileId");
             completeContent.Add(new StringContent(fileName), "fileName");
-            completeContent.Add(new StringContent(totalChunks.ToString()), "totalChunks");
+            completeContent.Add(new StringContent(chunkIndex.ToString()), "totalChunks");
 
-            await _httpClient.PostAsync("upload-complete", completeContent);
+            var completeResponse = await _httpClient.PostAsync("upload-complete", completeContent);
+            completeResponse.EnsureSuccessStatusCode();
 
-            Console.WriteLine($"Upload {requestId} completed");
+            Console.WriteLine($"Uploaded file: {fileName}");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Upload {requestId} failed: {ex.Message}");
+            Console.WriteLine($"Upload failed for {fileName}: {ex.Message}");
         }
     }
 
