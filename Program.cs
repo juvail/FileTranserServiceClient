@@ -1,5 +1,6 @@
-﻿using System.Diagnostics;
-using System.Net.Http.Headers;
+﻿using FileTransferServiceClient.Model;
+using Microsoft.Extensions.Configuration;
+using System.Diagnostics;
 
 class Program
 {
@@ -12,35 +13,43 @@ class Program
     {
         Console.WriteLine("=== File Upload/Download Load Tester ===");
 
-        Console.Write("Enter number of upload requests: ");
-        int uploadCount = int.Parse(Console.ReadLine()!);
-
-        Console.Write("Enter number of download requests: ");
-        int downloadCount = int.Parse(Console.ReadLine()!);
+        var config = new ConfigurationBuilder()
+            .AddJsonFile("appsettings.json", optional: false)
+            .Build();
+        var settings = config.GetSection("LoadTestSettings").Get<LoadTestSettings>();
+        string folderPath = settings.FolderPath;
+        int uploadCount = settings.UploadCount;
+        int downloadCount = settings.DownloadCount;
 
         var stopwatch = Stopwatch.StartNew();
 
-        var uploadTasks = RunUploadsAsync(uploadCount);
-        var downloadTasks = RunDownloadsAsync(downloadCount);
+        var uploadTask = RunUploadsAsync(uploadCount, folderPath);
+        var downloadTask = RunDownloadsAsync(downloadCount);
 
-        await Task.WhenAll(uploadTasks, downloadTasks);
+        await Task.WhenAll(uploadTask, downloadTask);
 
         stopwatch.Stop();
 
         Console.WriteLine($"\nAll requests completed in {stopwatch.ElapsedMilliseconds} ms");
-        Console.WriteLine("Press any key to exit...");
-        Console.ReadKey();
     }
 
     // ---------------- UPLOADS ----------------
-    private static async Task RunUploadsAsync(int count)
+    private static async Task RunUploadsAsync(int uploadCount, string folderPath)
     {
+        var files = Directory.GetFiles(folderPath);
+
+        if (files.Length == 0)
+        {
+            Console.WriteLine("No files found in folder.");
+            return;
+        }
+
         var tasks = new List<Task>();
 
-        for (int i = 0; i < count; i++)
+        for (int i = 0; i < uploadCount; i++)
         {
-            int index = i;
-            tasks.Add(Task.Run(() => UploadFileAsync(index)));
+            string fileToUpload = files[i % files.Length];
+            tasks.Add(UploadFileAsync(fileToUpload));
         }
 
         await Task.WhenAll(tasks);
